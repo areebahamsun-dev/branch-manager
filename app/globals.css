@@ -166,6 +166,7 @@ tbody td.cell {
   position: relative;
   user-select: none;
   border-left: 3px solid var(--paper);
+  touch-action: manipulation;
 }
 tbody td.cell::after {
   content: "";
@@ -291,6 +292,7 @@ tbody td.cell.readonly {
   font-size: 14px;
   cursor: pointer;
   text-align: left;
+  touch-action: manipulation;
 }
 .hrow-head:hover {
   background: #e6eadf;
@@ -398,6 +400,24 @@ tbody td.cell.readonly {
   align-items: center;
   gap: 10px;
 }
+.bar .progress > span:first-child {
+  white-space: nowrap;
+}
+.bar .sync {
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.bar .sync[data-sync="saving"] {
+  color: var(--sage);
+}
+.bar .sync[data-sync="saved"] {
+  color: #cde3c3;
+}
+.bar .sync[data-sync="offline"] {
+  color: #f2c4a0;
+}
 .bar .track {
   flex: 1;
   height: 5px;
@@ -422,6 +442,7 @@ tbody td.cell.readonly {
   cursor: pointer;
   background: #fff;
   color: var(--ink);
+  touch-action: manipulation;
 }
 .bar button.ghost {
   background: transparent;
@@ -454,8 +475,23 @@ tbody td.cell.readonly {
 }
 
 @media (max-width: 520px) {
+  body {
+    padding-bottom: 126px;
+  }
   .sheet {
     padding: 26px 10px 20px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .sheet table {
+    min-width: 480px;
+  }
+  tbody td {
+    height: 40px;
+  }
+  tbody td.cell::after {
+    width: 21px;
+    height: 21px;
   }
   tbody td.name {
     font-size: 13px;
@@ -475,14 +511,22 @@ tbody td.cell.readonly {
   .controls .week {
     grid-column: auto;
   }
+  .controls input {
+    font-size: 16px;
+    padding: 12px;
+  }
   .hrow-head {
     flex-wrap: wrap;
+    min-height: 52px;
   }
   .hrow-head .hdate {
     min-width: 0;
   }
   .hrow-head .hprog {
     margin-left: auto;
+  }
+  .bar .sync {
+    font-size: 12px;
   }
 }
 

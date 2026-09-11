@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Bebas_Neue, Great_Vibes, Jost } from "next/font/google";
 import "./globals.css";
 
@@ -25,6 +25,18 @@ const jost = Jost({
 export const metadata: Metadata = {
   title: "Hamsun — Branch Manager Weekly Checklist",
   description: "Weekly checklist for Hamsun Hospitality branch managers",
+  applicationName: "Hamsun Checklist",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Hamsun Checklist",
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#0f3d2e",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

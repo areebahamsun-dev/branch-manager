@@ -26,8 +26,17 @@ type Row = {
 };
 
 const META_KEY = "hamsun-bm-checklist:meta";
+const WEEK_KEY = "hamsun-bm-checklist:week";
 const localKey = (b: string, w: string) => `hamsun-bm-checklist:${b}:${w}`;
 const branchKey = (b: string) => b.trim() || "General";
+
+function readWeek(): string {
+  try {
+    return localStorage.getItem(WEEK_KEY) || iso(mondayOf(new Date()));
+  } catch {
+    return iso(mondayOf(new Date()));
+  }
+}
 
 function loadLocal(b: string, w: string): Record<string, boolean> {
   try {
@@ -124,14 +133,17 @@ export default function Page() {
   const [branchLive, setBranchLive] = useState(() => readMeta().branch ?? "");
   const [branch, setBranch] = useState(() => (readMeta().branch ?? "").trim() || "");
   const [manager, setManager] = useState(() => readMeta().manager ?? "");
-  const [weekStart, setWeekStart] = useState(() => iso(mondayOf(new Date())));
+  const [weekStart, setWeekStart] = useState<string>(readWeek);
   const [data, setData] = useState<Record<string, boolean>>({});
   const [history, setHistory] = useState<Row[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState("");
+  const [sync, setSync] = useState<"idle" | "saving" | "saved" | "offline">("idle");
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const branchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dataRef = useRef<Record<string, boolean>>(data);
+  const managerRef = useRef(manager);
 
   const days = useMemo(() => buildDays(parseISO(weekStart)), [weekStart]);
   const done = useMemo(() => countDone(data), [data]);
@@ -140,6 +152,11 @@ export default function Page() {
     setToastMsg(m);
     setTimeout(() => setToastMsg(""), 2200);
   };
+
+  function commitData(next: Record<string, boolean>) {
+    dataRef.current = next;
+    setData(next);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -153,7 +170,9 @@ export default function Page() {
         .eq("week_start", weekStart)
         .maybeSingle();
       if (cancelled) return;
-      setData((row?.data as Record<string, boolean> | undefined) ?? localData);
+      const resolved = (row?.data as Record<string, boolean> | undefined) ?? localData;
+      dataRef.current = resolved;
+      setData(resolved);
     })();
     return () => {
       cancelled = true;
@@ -179,58 +198,99 @@ export default function Page() {
 
   function saveNow() {
     const b = branchKey(branch);
-    const row = { branch: b, manager, week_start: weekStart, data };
+    const d = dataRef.current;
+    const m = managerRef.current;
+    const row = { branch: b, manager: m, week_start: weekStart, data: d };
     try {
-      localStorage.setItem(localKey(b, weekStart), JSON.stringify(data));
+      localStorage.setItem(localKey(b, weekStart), JSON.stringify(d));
     } catch {
       /* ignore */
     }
+    setSync("saving");
     supabase
       .from("weekly_checklists")
       .upsert(row, { onConflict: "branch,week_start" })
       .then(({ error }) => {
+        setSync(error ? "offline" : "saved");
         if (error) toast("Saved on this device only (sync pending)");
       });
     setHistory((prev) => {
       const i = prev.findIndex((r) => r.branch === b && r.week_start === weekStart);
       if (i === -1) return [{ ...row, id: "" }, ...prev];
       const copy = [...prev];
-      copy[i] = { ...copy[i], data, manager };
+      copy[i] = { ...copy[i], data: d, manager: m };
       return copy;
     });
   }
 
+  function flushSave() {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+      saveNow();
+    }
+  }
+
   function queueSave() {
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(saveNow, 500);
+    saveTimer.current = setTimeout(saveNow, 250);
+  }
+
+  function goToWeek(v: string) {
+    flushSave();
+    setWeekStart(v);
+    try {
+      localStorage.setItem(WEEK_KEY, v);
+    } catch {
+      /* ignore */
+    }
   }
 
   function toggle(si: number, ri: number, di: number) {
     const k = keyOf(si, ri, di);
-    setData((prev) => {
-      const next = { ...prev };
-      if (next[k]) delete next[k];
-      else next[k] = true;
-      return next;
-    });
+    const next = { ...dataRef.current };
+    if (next[k]) delete next[k];
+    else next[k] = true;
+    commitData(next);
     queueSave();
   }
 
+  useEffect(() => {
+    const flush = () => flushSave();
+    const onVis = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  });
+
   function onBranchInput(v: string) {
     setBranchLive(v);
-    writeMeta(v, manager);
+    writeMeta(v, managerRef.current);
     if (branchTimer.current) clearTimeout(branchTimer.current);
-    branchTimer.current = setTimeout(() => setBranch(v.trim()), 600);
+    branchTimer.current = setTimeout(() => {
+      flushSave();
+      setBranch(v.trim());
+    }, 600);
   }
 
   function onManagerInput(v: string) {
+    managerRef.current = v;
     setManager(v);
     writeMeta(branchLive, v);
   }
 
   function clearWeek() {
     if (!confirm("Clear all ticks for this week?")) return;
-    setData({});
+    commitData({});
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
     const b = branchKey(branch);
     try {
       localStorage.removeItem(localKey(b, weekStart));
@@ -240,10 +300,12 @@ export default function Page() {
     supabase
       .from("weekly_checklists")
       .upsert(
-        { branch: b, manager, week_start: weekStart, data: {} },
+        { branch: b, manager: managerRef.current, week_start: weekStart, data: {} },
         { onConflict: "branch,week_start" }
       )
-      .then(() => {});
+      .then(({ error }) => {
+        setSync(error ? "offline" : "saved");
+      });
     setHistory((prev) =>
       prev.map((r) => (r.branch === b && r.week_start === weekStart ? { ...r, data: {} } : r))
     );
@@ -251,11 +313,13 @@ export default function Page() {
   }
 
   function loadRecord(r: Row) {
+    flushSave();
     const b = r.branch === "General" ? "" : r.branch;
+    managerRef.current = r.manager || "";
     setBranchLive(b);
     setBranch(r.branch);
     setManager(r.manager || "");
-    setWeekStart(r.week_start);
+    goToWeek(r.week_start);
     setExpanded(null);
     writeMeta(b, r.manager || "");
   }
@@ -268,7 +332,7 @@ export default function Page() {
           <input
             type="date"
             value={weekStart}
-            onChange={(e) => setWeekStart(e.target.value || weekStart)}
+            onChange={(e) => goToWeek(e.target.value || weekStart)}
           />
         </label>
         <label>
@@ -382,6 +446,9 @@ export default function Page() {
         <div className="progress">
           <span>
             {done} of {TOTAL_CELLS} done
+          </span>
+          <span className="sync" data-sync={sync}>
+            {sync === "saving" ? "Saving…" : sync === "saved" ? "✓ Saved" : sync === "offline" ? "Offline" : ""}
           </span>
           <div className="track">
             <div className="fill" style={{ width: `${(done / TOTAL_CELLS) * 100}%` }} />
