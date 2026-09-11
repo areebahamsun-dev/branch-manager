@@ -129,9 +129,7 @@ export default function Page() {
   const [history, setHistory] = useState<Row[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState("");
-  const [busy, setBusy] = useState(false);
 
-  const sheetRef = useRef<HTMLDivElement>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const branchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -262,77 +260,6 @@ export default function Page() {
     writeMeta(b, r.manager || "");
   }
 
-  async function makePdf() {
-    if (!sheetRef.current) return null;
-    const html2canvas = (await import("html2canvas")).default;
-    const canvas = await html2canvas(sheetRef.current, {
-      scale: 2,
-      backgroundColor: "#ffffff",
-      useCORS: true,
-      windowWidth: 820,
-    });
-    const { jsPDF } = await import("jspdf");
-    const pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
-    const pw = pdf.internal.pageSize.getWidth();
-    const ph = pdf.internal.pageSize.getHeight();
-    const margin = 6;
-    const imgW = pw - margin * 2;
-    const pageH = ph - margin * 2;
-    const sliceH = (canvas.width * pageH) / imgW;
-    let y = 0;
-    let first = true;
-    while (y < canvas.height) {
-      const h = Math.min(sliceH, canvas.height - y);
-      const c = document.createElement("canvas");
-      c.width = canvas.width;
-      c.height = h;
-      c.getContext("2d")!.drawImage(canvas, 0, y, canvas.width, h, 0, 0, canvas.width, h);
-      if (!first) pdf.addPage();
-      pdf.addImage(c.toDataURL("image/jpeg", 0.92), "JPEG", margin, margin, imgW, (h * imgW) / canvas.width);
-      y += h;
-      first = false;
-    }
-    return pdf;
-  }
-
-  function fileName() {
-    const b = (branchLive.trim() || "Branch").replace(/[^\w-]+/g, "_");
-    return `Hamsun_Checklist_${b}_${weekStart}.pdf`;
-  }
-
-  async function savePdf() {
-    setBusy(true);
-    try {
-      const pdf = await makePdf();
-      pdf!.save(fileName());
-      toast("PDF saved to your downloads");
-    } catch (err) {
-      console.error(err);
-      toast("Could not create PDF");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function sharePdf() {
-    setBusy(true);
-    try {
-      const pdf = await makePdf();
-      const file = new File([pdf!.output("blob")], fileName(), { type: "application/pdf" });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], title: "Branch Manager Checklist" });
-      } else {
-        pdf!.save(fileName());
-        toast("Sharing not supported here — PDF downloaded instead");
-      }
-    } catch (err) {
-      console.error(err);
-      toast("Could not share PDF");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <>
       <div className="controls">
@@ -366,7 +293,7 @@ export default function Page() {
         </label>
       </div>
 
-      <div className="sheet" ref={sheetRef}>
+      <div className="sheet">
         <div className="sheet-head">
           <h1>Checklist</h1>
           <div className="sub">
@@ -460,12 +387,6 @@ export default function Page() {
             <div className="fill" style={{ width: `${(done / TOTAL_CELLS) * 100}%` }} />
           </div>
         </div>
-        <button onClick={savePdf} disabled={busy}>
-          {busy ? "Working…" : "Save PDF"}
-        </button>
-        <button onClick={sharePdf} disabled={busy}>
-          {busy ? "Working…" : "Share PDF"}
-        </button>
         <button className="ghost" onClick={clearWeek}>
           Clear week
         </button>
