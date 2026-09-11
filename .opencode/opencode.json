@@ -12,7 +12,8 @@
       "environment": {
         "SUPABASE_URL": "https://cyvevrulpkrrfhngmbbu.supabase.co",
         "SUPABASE_SERVICE_ROLE_KEY": "{env:SUPABASE_SERVICE_ROLE_KEY}",
-        "SUPABASE_PUBLISHABLE_KEY": "{env:SUPABASE_PUBLISHABLE_KEY}"
+        "SUPABASE_PUBLISHABLE_KEY": "{env:SUPABASE_PUBLISHABLE_KEY}",
+        "SUPABASE_DB_URL": "{env:SUPABASE_DB_URL}"
       }
     },
     "github": {
