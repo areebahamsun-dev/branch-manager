@@ -198,6 +198,20 @@ tbody td.cell:focus-visible {
 tbody td.cell.readonly {
   cursor: default;
 }
+tbody td.cell.readonly::after {
+  border-style: dashed;
+  opacity: 0.5;
+}
+tbody td.cell.readonly.on::after {
+  opacity: 0.65;
+}
+.lock-hint {
+  text-align: center;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: #8a9184;
+  margin-top: 12px;
+}
 
 .wordmark {
   text-align: center;

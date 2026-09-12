@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   SECTIONS,
@@ -65,14 +65,17 @@ function writeMeta(branch: string, manager: string) {
 function ChecklistGrid({
   data,
   days,
+  today,
   readOnly = false,
   onToggle,
 }: {
   data: Record<string, boolean>;
   days: { label: string; number: number; date: Date }[];
+  today?: string;
   readOnly?: boolean;
   onToggle?: (si: number, ri: number, di: number) => void;
 }) {
+  const isLockedDay = (di: number) => (today ? iso(days[di].date) < today : false);
   return (
     <>
       {SECTIONS.map((sec, si) => (
@@ -95,19 +98,18 @@ function ChecklistGrid({
                 {DAYS.map((_, di) => {
                   const k = keyOf(si, ri, di);
                   const on = !!data[k];
+                  const locked = readOnly || isLockedDay(di);
                   return (
                     <td
                       key={di}
-                      className={`cell${on ? " on" : ""}${readOnly ? " readonly" : ""}`}
+                      className={`cell${on ? " on" : ""}${locked ? " readonly" : ""}`}
                       role="checkbox"
                       aria-checked={on}
                       aria-label={`${r}, ${DAYS[di]} ${days[di].number}`}
-                      tabIndex={readOnly ? -1 : 0}
-                      onClick={
-                        readOnly || !onToggle ? undefined : () => onToggle(si, ri, di)
-                      }
+                      tabIndex={locked ? -1 : 0}
+                      onClick={locked || !onToggle ? undefined : () => onToggle(si, ri, di)}
                       onKeyDown={
-                        readOnly || !onToggle
+                        locked || !onToggle
                           ? undefined
                           : (e) => {
                               if (e.key === " " || e.key === "Enter") {
@@ -139,45 +141,27 @@ export default function Page() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState("");
   const [sync, setSync] = useState<"idle" | "saving" | "saved" | "offline">("idle");
+  const [today] = useState(() => iso(new Date()));
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const branchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dataRef = useRef<Record<string, boolean>>(data);
   const managerRef = useRef(manager);
+  const restoredRef = useRef(false);
 
   const days = useMemo(() => buildDays(parseISO(weekStart)), [weekStart]);
   const done = useMemo(() => countDone(data), [data]);
+  const hasLocked = useMemo(() => days.some((d) => iso(d.date) < today), [days, today]);
 
-  const toast = (m: string) => {
+  const toast = useCallback((m: string) => {
     setToastMsg(m);
     setTimeout(() => setToastMsg(""), 2200);
-  };
+  }, []);
 
   function commitData(next: Record<string, boolean>) {
     dataRef.current = next;
     setData(next);
   }
-
-  useEffect(() => {
-    let cancelled = false;
-    const b = branchKey(branch);
-    (async () => {
-      const localData = loadLocal(b, weekStart);
-      const { data: row } = await supabase
-        .from("weekly_checklists")
-        .select("data")
-        .eq("branch", b)
-        .eq("week_start", weekStart)
-        .maybeSingle();
-      if (cancelled) return;
-      const resolved = (row?.data as Record<string, boolean> | undefined) ?? localData;
-      dataRef.current = resolved;
-      setData(resolved);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [branch, weekStart, supabase]);
 
   useEffect(() => {
     let cancelled = false;
@@ -196,7 +180,7 @@ export default function Page() {
     };
   }, [branch, supabase]);
 
-  function saveNow() {
+  const saveNow = useCallback(() => {
     const b = branchKey(branch);
     const d = dataRef.current;
     const m = managerRef.current;
@@ -221,20 +205,48 @@ export default function Page() {
       copy[i] = { ...copy[i], data: d, manager: m };
       return copy;
     });
-  }
+  }, [branch, weekStart, toast, supabase]);
 
-  function flushSave() {
+  const flushSave = useCallback(() => {
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
       saveNow();
     }
-  }
+  }, [saveNow]);
 
-  function queueSave() {
+  const queueSave = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(saveNow, 250);
-  }
+  }, [saveNow]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const b = branchKey(branch);
+    (async () => {
+      const localData = loadLocal(b, weekStart);
+      const { data: row } = await supabase
+        .from("weekly_checklists")
+        .select("data")
+        .eq("branch", b)
+        .eq("week_start", weekStart)
+        .maybeSingle();
+      if (cancelled) return;
+      const resolved = (row?.data as Record<string, boolean> | undefined) ?? localData;
+      dataRef.current = resolved;
+      setData(resolved);
+      if (!row && Object.keys(resolved).length > 0) {
+        if (!restoredRef.current) {
+          restoredRef.current = true;
+          toast("Restored from this device — syncing back up");
+        }
+        queueSave();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [branch, weekStart, supabase, queueSave, toast]);
 
   function goToWeek(v: string) {
     flushSave();
@@ -252,6 +264,11 @@ export default function Page() {
     if (next[k]) delete next[k];
     else next[k] = true;
     commitData(next);
+    try {
+      localStorage.setItem(localKey(branchKey(branch), weekStart), JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
     queueSave();
   }
 
@@ -291,24 +308,7 @@ export default function Page() {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
     }
-    const b = branchKey(branch);
-    try {
-      localStorage.removeItem(localKey(b, weekStart));
-    } catch {
-      /* ignore */
-    }
-    supabase
-      .from("weekly_checklists")
-      .upsert(
-        { branch: b, manager: managerRef.current, week_start: weekStart, data: {} },
-        { onConflict: "branch,week_start" }
-      )
-      .then(({ error }) => {
-        setSync(error ? "offline" : "saved");
-      });
-    setHistory((prev) =>
-      prev.map((r) => (r.branch === b && r.week_start === weekStart ? { ...r, data: {} } : r))
-    );
+    saveNow();
     toast("Week cleared");
   }
 
@@ -375,7 +375,8 @@ export default function Page() {
             Week: <b>{weekRange(parseISO(weekStart))}</b>
           </div>
         </div>
-        <ChecklistGrid data={data} days={days} onToggle={toggle} />
+        <ChecklistGrid data={data} days={days} today={today} onToggle={toggle} />
+        {hasLocked && <div className="lock-hint">Past days are locked — not editable</div>}
         <div className="wordmark">
           <div>
             <div className="n">HAMSUN</div>
